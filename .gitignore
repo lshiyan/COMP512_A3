@@ -11,3 +11,5 @@ apache-zookeeper-3.8.5-bin/
 zk/servers/
 *.class
 *DS_Store
+
+*log
