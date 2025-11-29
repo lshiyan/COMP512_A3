@@ -41,7 +41,7 @@ public class DistProcess implements Watcher, AsyncCallback.ChildrenCallback, Asy
     String workerPath;
     Set<String> aliveWorkers = new HashSet<>();
     Set<String> tasksWithResults = new HashSet<>();  // Track completed tasks
-    HashMap<String, DistTask> taskMap= new ConcurrentHashMap<>();
+    Map<String, DistTask> taskMap= new ConcurrentHashMap<String, DistTask>();
     final long TIME_SLICE_MS = 500; //Timeout for tasks.
 
     DistProcess(String zkhost)
@@ -295,12 +295,12 @@ public class DistProcess implements Watcher, AsyncCallback.ChildrenCallback, Asy
     void executeTask(String taskId) {
         System.out.println("DISTAPP : Worker executing task: " + taskId);
         try {
-            DistTask dt = null;
+            DistTask dt;
 
-            if (taskMap.containsKey(taskId)){
+            // Retrieve task (either from memory or ZK)
+            if (taskMap.containsKey(taskId)) {
                 dt = taskMap.get(taskId);
-            }
-            else{
+            } else {
                 byte[] taskSerial = zk.getData(tasksPath + "/" + taskId, false, null);
                 ByteArrayInputStream bis = new ByteArrayInputStream(taskSerial);
                 ObjectInput in = new ObjectInputStream(bis);
@@ -308,11 +308,13 @@ public class DistProcess implements Watcher, AsyncCallback.ChildrenCallback, Asy
                 taskMap.put(taskId, dt);
             }
 
+            // dt is now effectively final
+            final DistTask task = dt;
             AtomicBoolean interruptedFlag = new AtomicBoolean(false);
 
             Thread computeThread = new Thread(() -> {
                 try {
-                    dt.compute(); 
+                    task.compute();
                 } catch (InterruptedException e) {
                     interruptedFlag.set(true);
                     System.out.println("DISTAPP : Task interrupted, partial state saved in-memory");
@@ -321,43 +323,47 @@ public class DistProcess implements Watcher, AsyncCallback.ChildrenCallback, Asy
                 }
             });
 
+            computeThread.start(); // <-- YOU WERE MISSING THIS
+
+            // Time slicing logic
+            computeThread.join(TIME_SLICE_MS);
+
             if (computeThread.isAlive()) {
                 System.out.println("DISTAPP : Interrupting task (time slice expired)");
                 interruptedFlag.set(true);
                 computeThread.interrupt();
             }
 
-            computeThread.join();
+            computeThread.join(); // Wait for thread termination
 
             // Decide full completion vs partial
             if (!interruptedFlag.get()) {
-                // Fully finished
                 taskMap.remove(taskId);
 
-                // Serialize final result
                 ByteArrayOutputStream bos = new ByteArrayOutputStream();
                 ObjectOutputStream oos = new ObjectOutputStream(bos);
-                oos.writeObject(dt);
+                oos.writeObject(task);
                 oos.flush();
                 byte[] taskSerial = bos.toByteArray();
 
                 zk.create(tasksPath + "/" + taskId + "/result",
                         taskSerial, Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT);
+
                 System.out.println("DISTAPP : Worker completed task: " + taskId);
-            } 
-            else {
-                // Partial — keep dt in memory
+            } else {
                 System.out.println("DISTAPP : Task partially executed, saved in worker memory");
             }
 
-            // Worker goes idle again
+            // Mark worker idle
             zk.setData(workerPath, "idle".getBytes(), -1);
             System.out.println("DISTAPP : Worker back to idle");
-            
+
         } catch (Exception e) {
             e.printStackTrace();
             try { zk.setData(workerPath, "idle".getBytes(), -1); } catch (Exception ignore) {}
+        }
     }
+
 
     public static void main(String args[]) throws Exception
     {

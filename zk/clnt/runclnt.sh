@@ -14,8 +14,8 @@ fi
 
 # TODO Include your ZooKeeper connection string here. Make sure there are no spaces.
 # 	Replace with your server names and client ports.
-#export ZKSERVER=tr-open-XX.cs.mcgill.ca:218XX,tr-open-XX.cs.mcgill.ca:218XX,tr-open-XX.cs.mcgill.ca:218XX
+export ZKSERVER=tr-open-09.cs.mcgill.ca:21826,tr-open-10.cs.mcgill.ca:21826,tr-open-11.cs.mcgill.ca:21826
 # export ZKSERVER=open-gpu-XX.cs.mcgill.ca:218XX,open-gpu-XX.cs.mcgill.ca:218XX,open-gpu-XX.cs.mcgill.ca:218XX
-export ZKSERVER=localhost:21811,localhost:21812,localhost:21813
+#export ZKSERVER=localhost:21811,localhost:21812,localhost:21813
 
 java -cp $CLASSPATH:../task:.: DistClient "$@"
