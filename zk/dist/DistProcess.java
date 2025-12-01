@@ -41,7 +41,6 @@ public class DistProcess implements Watcher, AsyncCallback.ChildrenCallback, Asy
     String workerPath;
     Set<String> aliveWorkers = new HashSet<>();
     Set<String> tasksWithResults = new HashSet<>();  // Track completed tasks
-    Map<String, DistTask> taskMap= new ConcurrentHashMap<String, DistTask>();
     final long TIME_SLICE_MS = 500; //Timeout for tasks.
 
     DistProcess(String zkhost)
@@ -298,15 +297,10 @@ public class DistProcess implements Watcher, AsyncCallback.ChildrenCallback, Asy
             DistTask dt;
 
             // Retrieve task (either from memory or ZK)
-            if (taskMap.containsKey(taskId)) {
-                dt = taskMap.get(taskId);
-            } else {
-                byte[] taskSerial = zk.getData(tasksPath + "/" + taskId, false, null);
-                ByteArrayInputStream bis = new ByteArrayInputStream(taskSerial);
-                ObjectInput in = new ObjectInputStream(bis);
-                dt = (DistTask) in.readObject();
-                taskMap.put(taskId, dt);
-            }
+            byte[] taskSerial = zk.getData(tasksPath + "/" + taskId, false, null);
+            ByteArrayInputStream bis = new ByteArrayInputStream(taskSerial);
+            ObjectInput in = new ObjectInputStream(bis);
+            dt = (DistTask) in.readObject();
 
             // dt is now effectively final
             final DistTask task = dt;
@@ -323,7 +317,7 @@ public class DistProcess implements Watcher, AsyncCallback.ChildrenCallback, Asy
                 }
             });
 
-            computeThread.start(); // <-- YOU WERE MISSING THIS
+            computeThread.start();
 
             // Time slicing logic
             computeThread.join(TIME_SLICE_MS);
@@ -336,21 +330,21 @@ public class DistProcess implements Watcher, AsyncCallback.ChildrenCallback, Asy
 
             computeThread.join(); // Wait for thread termination
 
+            ByteArrayOutputStream bos = new ByteArrayOutputStream();
+            ObjectOutputStream oos = new ObjectOutputStream(bos);
+            oos.writeObject(task);
+            oos.flush();
+            byte[] outputBytes = bos.toByteArray();
             // Decide full completion vs partial
             if (!interruptedFlag.get()) {
-                taskMap.remove(taskId);
-
-                ByteArrayOutputStream bos = new ByteArrayOutputStream();
-                ObjectOutputStream oos = new ObjectOutputStream(bos);
-                oos.writeObject(task);
-                oos.flush();
-                byte[] taskSerial = bos.toByteArray();
 
                 zk.create(tasksPath + "/" + taskId + "/result",
-                        taskSerial, Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT);
+                        outputBytes, Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT);
 
                 System.out.println("DISTAPP : Worker completed task: " + taskId);
             } else {
+                
+                zk.setData(tasksPath + "/" + taskId, outputBytes, -1);
                 System.out.println("DISTAPP : Task partially executed, saved in worker memory");
             }
 
