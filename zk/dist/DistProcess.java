@@ -139,6 +139,16 @@ public class DistProcess implements Watcher, AsyncCallback.ChildrenCallback, Asy
             getWorkers();
         }
 
+        // Manager: worker status changed (became idle or got assigned)
+        if (isManager && e.getType() == Watcher.Event.EventType.NodeDataChanged
+            && e.getPath() != null && e.getPath().startsWith(workersPath + "/")) {
+            System.out.println("DISTAPP : Manager detected worker status change: " + e.getPath());
+            // Re-install watch on this worker
+            zk.getData(e.getPath(), this, null, null);
+            // Try to assign pending tasks (in case worker just became idle)
+            tryAssignTasks();
+        }
+
         if(e.getType() == Watcher.Event.EventType.None) // This seems to be the event type associated with connections.
         {
             // Once we are connected, do our intialization stuff.
@@ -211,8 +221,16 @@ public class DistProcess implements Watcher, AsyncCallback.ChildrenCallback, Asy
     void assignOneTask(List<String> tasks) {
         for (String taskId : tasks) {
             if (!tasksWithResults.contains(taskId)) {
-                findIdleWorkerAndAssign(taskId);
-                break; 
+                try {
+                    // Double-check that result doesn't exist before assigning
+                    org.apache.zookeeper.data.Stat stat = zk.exists(tasksPath + "/" + taskId + "/result", false);
+                    if (stat == null) {  // Result doesn't exist yet
+                        findIdleWorkerAndAssign(taskId);
+                        break;
+                    }
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
             }
         }
     }
@@ -226,7 +244,7 @@ public class DistProcess implements Watcher, AsyncCallback.ChildrenCallback, Asy
 
         String workerId = aliveWorkers.iterator().next();
         String workerNodePath = workersPath + "/" + workerId;
-        zk.getData(workerNodePath, false, this, taskId + ":" + workerId);
+        zk.getData(workerNodePath, this, this, taskId + ":" + workerId);
     }
 
     //after receiving the data callback, you assign by changing idle to the task number
